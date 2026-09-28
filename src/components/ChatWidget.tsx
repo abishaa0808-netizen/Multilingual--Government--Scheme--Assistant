@@ -15,6 +15,7 @@ interface Message {
   content: string;
   timestamp: number;
   toolsUsed?: ToolTrace[];
+  modelUsed?: string;
 }
 
 interface ChatWidgetProps {
@@ -230,6 +231,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
         content: data.reply || 'Information retrieved.',
         timestamp: Date.now(),
         toolsUsed: data.toolsUsed || [],
+        modelUsed: data.modelUsed,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
@@ -494,14 +496,21 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
 
                     {/* Speech Output Button on Assistant Messages */}
                     {isAssistant && (
-                      <div className="mt-2 pt-1 flex items-center justify-between text-[11px] text-slate-400">
-                        <button
-                          type="button"
-                          onClick={() => handleSpeak(msg.content)}
-                          className="text-blue-700 hover:text-blue-900 hover:underline flex items-center gap-1 font-medium cursor-pointer"
-                        >
-                          <span>{isSpeaking ? t.voiceReadoutStop : t.voiceReadout}</span>
-                        </button>
+                      <div className="mt-2 pt-1 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleSpeak(msg.content)}
+                            className="text-blue-700 hover:text-blue-900 hover:underline flex items-center gap-1 font-medium cursor-pointer"
+                          >
+                            <span>{isSpeaking ? t.voiceReadoutStop : t.voiceReadout}</span>
+                          </button>
+                          {msg.modelUsed && (
+                            <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-mono">
+                              {msg.modelUsed}
+                            </span>
+                          )}
+                        </div>
                         <span>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                       </div>
                     )}

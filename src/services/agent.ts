@@ -37,6 +37,7 @@ export interface AgentResponse {
   reply: string;
   toolsUsed: ToolResult[];
   language: string;
+  modelUsed?: string;
 }
 
 // System prompt enforcing accuracy, official sources only, no emojis, concise and helpful
@@ -51,6 +52,58 @@ CRITICAL INSTRUCTIONS:
 5. Provide official government website links whenever relevant.
 6. Always answer in the user's requested language.
 7. If the user asks what they are missing or if cross-sector benefits apply, highlight relevant opportunities in health, energy, or pension schemes.`;
+
+async function callLlamaAPI(prompt: string, systemInstruction: string): Promise<string> {
+  const llamaKey =
+    process.env.LLAMA_API_KEY ||
+    process.env.GROQ_API_KEY ||
+    process.env.OPENROUTER_API_KEY ||
+    process.env.TOGETHER_API_KEY;
+
+  const baseUrl =
+    process.env.LLAMA_BASE_URL ||
+    (process.env.OPENROUTER_API_KEY
+      ? 'https://openrouter.ai/api/v1'
+      : process.env.TOGETHER_API_KEY
+      ? 'https://api.together.xyz/v1'
+      : 'https://api.groq.com/openai/v1');
+
+  const model =
+    process.env.LLAMA_MODEL ||
+    (process.env.OPENROUTER_API_KEY
+      ? 'meta-llama/llama-3.3-70b-instruct'
+      : process.env.TOGETHER_API_KEY
+      ? 'meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo'
+      : 'llama-3.3-70b-versatile');
+
+  if (!llamaKey && !process.env.LLAMA_BASE_URL) {
+    return '';
+  }
+
+  const response = await fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(llamaKey ? { Authorization: `Bearer ${llamaKey}` } : {}),
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: systemInstruction },
+        { role: 'user', content: prompt },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Llama API call failed (${response.status}): ${errorText}`);
+  }
+
+  const result = await response.json();
+  return result?.choices?.[0]?.message?.content || '';
+}
 
 export async function runGovernmentSchemeAgent(req: AgentRequest): Promise<AgentResponse> {
   const { message, language, sessionId, history = [], state, sector, profile } = req;
@@ -137,34 +190,22 @@ export async function runGovernmentSchemeAgent(req: AgentRequest): Promise<Agent
     toolsExecuted.push(toolWhatAmIMissing(activeSectors, profile));
   }
 
-  // 2. Multilingual Generation with LLM (Gemini) or rule-based fallback
+  // 2. Multilingual Generation with LLM (Llama or Gemini) or rule-based fallback
   const langObj = LANGUAGES.find((l) => l.code === language) || LANGUAGES[0];
   const targetLanguage = langObj.name;
 
   let assistantReply = '';
+  let modelUsed = 'Official Government Schemes Knowledge Engine';
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  // Prepare compact tool context for LLM
+  const toolsContext = toolsExecuted.map((t) => ({
+    toolName: t.toolName,
+    querySummary: t.querySummary,
+    resultsCount: t.foundCount,
+    data: t.data,
+  }));
 
-  if (apiKey) {
-    try {
-      const ai = new GoogleGenAI({
-        apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          },
-        },
-      });
-
-      // Prepare compact tool context for LLM
-      const toolsContext = toolsExecuted.map((t) => ({
-        toolName: t.toolName,
-        querySummary: t.querySummary,
-        resultsCount: t.foundCount,
-        data: t.data,
-      }));
-
-      const prompt = `User Query: "${message}"
+  const prompt = `User Query: "${message}"
 Requested Language: ${targetLanguage} (${langObj.nativeName})
 Selected State/UT: ${state || 'All-India'}
 Selected Sector: ${sector || 'All'}
@@ -177,6 +218,41 @@ Respond directly to the user in ${targetLanguage}.
 Provide accurate, structured information including scheme name, key benefits, eligibility criteria, required documents, and official government website link.
 Remind: DO NOT use any emojis or decorative icons. Keep explanations concise, clear, and professional.`;
 
+  // Check for Llama AI first (Groq, Together, OpenRouter, or Ollama)
+  const hasLlamaConfig = Boolean(
+    process.env.LLAMA_API_KEY ||
+      process.env.GROQ_API_KEY ||
+      process.env.OPENROUTER_API_KEY ||
+      process.env.TOGETHER_API_KEY ||
+      process.env.LLAMA_BASE_URL
+  );
+
+  if (hasLlamaConfig) {
+    try {
+      const llamaOutput = await callLlamaAPI(prompt, SYSTEM_INSTRUCTION);
+      if (llamaOutput && llamaOutput.trim()) {
+        assistantReply = llamaOutput;
+        const llamaModelName = process.env.LLAMA_MODEL || 'Meta Llama 3.3';
+        modelUsed = `${llamaModelName} (Llama AI)`;
+      }
+    } catch (llamaErr) {
+      console.error('Llama AI API call failed, falling back:', llamaErr);
+    }
+  }
+
+  // If Llama was not configured or failed, check for Gemini
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!assistantReply && apiKey) {
+    try {
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      });
+
       const response = await ai.models.generateContent({
         model: 'gemini-3.8-flash',
         contents: prompt,
@@ -186,13 +262,16 @@ Remind: DO NOT use any emojis or decorative icons. Keep explanations concise, cl
         },
       });
 
-      assistantReply = response.text || '';
+      if (response.text && response.text.trim()) {
+        assistantReply = response.text;
+        modelUsed = 'Google Gemini 2.5 Flash';
+      }
     } catch (err) {
       console.error('Gemini API call failed, generating factual fallback:', err);
     }
   }
 
-  // Deterministic factual fallback if Gemini was not available or produced empty response
+  // Deterministic factual fallback if no LLM was available or both produced empty responses
   if (!assistantReply || !assistantReply.trim()) {
     assistantReply = buildDeterministicReply(message, targetLanguage, toolsExecuted, state, sector);
   }
@@ -202,6 +281,7 @@ Remind: DO NOT use any emojis or decorative icons. Keep explanations concise, cl
     reply: assistantReply,
     toolsUsed: toolsExecuted,
     language,
+    modelUsed,
   };
 }
 
