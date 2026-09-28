@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { LANGUAGES } from '../data/constants.ts';
 import { getTranslation } from '../data/translations.ts';
+import { runGovernmentSchemeAgent } from '../services/agent.ts';
 import { VirtualKeyboard } from './VirtualKeyboard.tsx';
 
 interface ToolTrace {
@@ -211,27 +212,46 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
     setActiveTools(['Scheme Search', 'Eligibility Checker', 'Official Source']);
 
     try {
-      const response = await fetch('/api/agent/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      let agentData: any = null;
+      try {
+        const response = await fetch('/api/agent/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: userMessage.content,
+            language: currentLanguage,
+            state: currentState,
+            sessionId: sessionId,
+            history: messages.slice(-4).map((m) => ({ role: m.role, content: m.content })),
+          }),
+        });
+        if (response.ok) {
+          const contentType = response.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            agentData = await response.json();
+          }
+        }
+      } catch (networkErr) {
+        console.warn('API network error, switching to client intelligence:', networkErr);
+      }
+
+      if (!agentData || !agentData.reply) {
+        agentData = await runGovernmentSchemeAgent({
           message: userMessage.content,
           language: currentLanguage,
           state: currentState,
           sessionId: sessionId,
           history: messages.slice(-4).map((m) => ({ role: m.role, content: m.content })),
-        }),
-      });
-
-      const data = await response.json();
+        });
+      }
 
       const assistantMessage: Message = {
         id: `asst_${Date.now()}`,
         role: 'assistant',
-        content: data.reply || 'Information retrieved.',
+        content: agentData.reply || 'Information retrieved.',
         timestamp: Date.now(),
-        toolsUsed: data.toolsUsed || [],
-        modelUsed: data.modelUsed,
+        toolsUsed: agentData.toolsUsed || [],
+        modelUsed: agentData.modelUsed,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
@@ -240,7 +260,7 @@ export const ChatWidget: React.FC<ChatWidgetProps> = ({
       const errorMessage: Message = {
         id: `err_${Date.now()}`,
         role: 'assistant',
-        content: 'I encountered an error connecting to the welfare scheme database. Please try again or check your search keywords.',
+        content: 'I encountered an error retrieving welfare scheme information. Please try different keywords or select filters.',
         timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, errorMessage]);

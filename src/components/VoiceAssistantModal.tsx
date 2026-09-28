@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { LANGUAGES } from '../data/constants.ts';
 import { getTranslation } from '../data/translations.ts';
+import { runGovernmentSchemeAgent } from '../services/agent.ts';
 
 interface VoiceAssistantModalProps {
   isOpen: boolean;
@@ -148,27 +149,47 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
     }
 
     try {
-      const res = await fetch('/api/agent/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      let reply = '';
+      try {
+        const res = await fetch('/api/agent/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: textToQuery,
+            language: currentLanguage,
+            state: currentState,
+            sessionId: `voice_${Date.now()}`,
+          }),
+        });
+        if (res.ok) {
+          const contentType = res.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const data = await res.json();
+            reply = data.reply || '';
+          }
+        }
+      } catch (e) {
+        console.warn('API call failed, running local voice agent:', e);
+      }
+
+      if (!reply) {
+        const agentData = await runGovernmentSchemeAgent({
           message: textToQuery,
           language: currentLanguage,
           state: currentState,
           sessionId: `voice_${Date.now()}`,
-        }),
-      });
+        });
+        reply = agentData.reply || 'No information found for this query.';
+      }
 
-      const data = await res.json();
-      const reply = data.reply || 'No information found for this query.';
       setAgentResponse(reply);
       setStatusMessage('Answer retrieved. Playing audio readout.');
 
       // Trigger spoken output
       speakText(reply);
     } catch (err) {
-      setAgentResponse('Unable to connect to the scheme database. Please try again.');
-      setStatusMessage('Connection error.');
+      setAgentResponse('Unable to retrieve scheme details. Please try another question.');
+      setStatusMessage('Query error.');
     } finally {
       setIsProcessing(false);
     }
