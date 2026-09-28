@@ -38,11 +38,14 @@ export const MissingSchemesFinder: React.FC<MissingSchemesFinderProps> = ({
         body: JSON.stringify({ sectors: selectedSectors }),
       });
       if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.data)) {
-          setMissingResults(data.data);
-          setIsLoading(false);
-          return;
+        const cType = res.headers.get('content-type') || '';
+        if (cType.includes('application/json')) {
+          const data = await res.json();
+          if (Array.isArray(data.data)) {
+            setMissingResults(data.data);
+            setIsLoading(false);
+            return;
+          }
         }
       }
     } catch (err) {

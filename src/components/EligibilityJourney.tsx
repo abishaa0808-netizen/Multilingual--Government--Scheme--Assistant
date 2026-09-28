@@ -45,11 +45,14 @@ export const EligibilityJourney: React.FC<EligibilityJourneyProps> = ({
         body: JSON.stringify(profile),
       });
       if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.data)) {
-          setResults(data.data);
-          setIsLoading(false);
-          return;
+        const cType = res.headers.get('content-type') || '';
+        if (cType.includes('application/json')) {
+          const data = await res.json();
+          if (Array.isArray(data.data)) {
+            setResults(data.data);
+            setIsLoading(false);
+            return;
+          }
         }
       }
     } catch (err) {

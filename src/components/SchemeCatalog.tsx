@@ -42,11 +42,14 @@ export const SchemeCatalog: React.FC<SchemeCatalogProps> = ({
 
       const res = await fetch(`/api/schemes?${params.toString()}`);
       if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.schemes)) {
-          setSchemes(data.schemes);
-          setIsLoading(false);
-          return;
+        const cType = res.headers.get('content-type') || '';
+        if (cType.includes('application/json')) {
+          const data = await res.json();
+          if (Array.isArray(data.schemes)) {
+            setSchemes(data.schemes);
+            setIsLoading(false);
+            return;
+          }
         }
       }
     } catch (err) {
