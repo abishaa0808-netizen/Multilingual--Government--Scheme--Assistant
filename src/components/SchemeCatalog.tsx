@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { SECTORS, STATES_AND_UTS, Scheme } from '../data/constants.ts';
 import { getTranslation } from '../data/translations.ts';
+import { getAllSchemes, toolSchemeSearch } from '../services/tools.ts';
 import { SchemeCard } from './SchemeCard.tsx';
 import { VirtualKeyboard } from './VirtualKeyboard.tsx';
 
@@ -40,10 +41,41 @@ export const SchemeCatalog: React.FC<SchemeCatalogProps> = ({
       if (selectedGovt && selectedGovt !== 'All') params.append('government', selectedGovt);
 
       const res = await fetch(`/api/schemes?${params.toString()}`);
-      const data = await res.json();
-      setSchemes(data.schemes || []);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.schemes)) {
+          setSchemes(data.schemes);
+          setIsLoading(false);
+          return;
+        }
+      }
     } catch (err) {
-      console.error('Failed to load schemes:', err);
+      console.warn('API route unavailable, using verified local catalog:', err);
+    }
+
+    // Direct local fallback
+    try {
+      let localResults = getAllSchemes();
+      if (searchQuery.trim()) {
+        const sRes = toolSchemeSearch(searchQuery.trim());
+        localResults = sRes.data as Scheme[];
+      }
+      if (currentState && currentState !== 'All-India (Central)') {
+        const norm = currentState.toLowerCase();
+        localResults = localResults.filter(
+          (s) => s.state.toLowerCase() === norm || (s.government === 'Central' && s.state.toLowerCase().includes('all-india'))
+        );
+      }
+      if (selectedSector && selectedSector !== 'All') {
+        const normSec = selectedSector.toLowerCase();
+        localResults = localResults.filter((s) => s.sector.toLowerCase() === normSec);
+      }
+      if (selectedGovt && selectedGovt !== 'All') {
+        localResults = localResults.filter((s) => s.government.toLowerCase() === selectedGovt.toLowerCase());
+      }
+      setSchemes(localResults);
+    } catch (localErr) {
+      console.error('Failed to run local scheme query:', localErr);
     } finally {
       setIsLoading(false);
     }

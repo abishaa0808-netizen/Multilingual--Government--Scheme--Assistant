@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { UserProfile, STATES_AND_UTS, OCCUPATIONS, EDUCATION_LEVELS, Scheme } from '../data/constants.ts';
 import { getTranslation } from '../data/translations.ts';
+import { toolEligibilityChecker } from '../services/tools.ts';
 import { SchemeCard } from './SchemeCard.tsx';
 
 interface EligibilityJourneyProps {
@@ -43,10 +44,24 @@ export const EligibilityJourney: React.FC<EligibilityJourneyProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(profile),
       });
-      const data = await res.json();
-      setResults(data.data || []);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.data)) {
+          setResults(data.data);
+          setIsLoading(false);
+          return;
+        }
+      }
     } catch (err) {
-      console.error('Eligibility check error:', err);
+      console.warn('API eligibility check unavailable, running local checker:', err);
+    }
+
+    try {
+      const localResult = toolEligibilityChecker(profile);
+      setResults(localResult.data || []);
+    } catch (localErr) {
+      console.error('Local eligibility check failed:', localErr);
+      setResults([]);
     } finally {
       setIsLoading(false);
     }

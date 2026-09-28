@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { SECTORS, Scheme } from '../data/constants.ts';
 import { getTranslation } from '../data/translations.ts';
+import { toolWhatAmIMissing } from '../services/tools.ts';
 import { SchemeCard } from './SchemeCard.tsx';
 
 interface MissingSchemesFinderProps {
@@ -36,10 +37,24 @@ export const MissingSchemesFinder: React.FC<MissingSchemesFinderProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sectors: selectedSectors }),
       });
-      const data = await res.json();
-      setMissingResults(data.data || []);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.data)) {
+          setMissingResults(data.data);
+          setIsLoading(false);
+          return;
+        }
+      }
     } catch (err) {
-      console.error('Error finding missing schemes:', err);
+      console.warn('API route unavailable, running local detector:', err);
+    }
+
+    try {
+      const localResult = toolWhatAmIMissing(selectedSectors);
+      setMissingResults(localResult.data || []);
+    } catch (localErr) {
+      console.error('Local detector failed:', localErr);
+      setMissingResults([]);
     } finally {
       setIsLoading(false);
     }
